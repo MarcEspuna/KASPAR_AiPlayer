@@ -30,7 +30,7 @@ GameInterface::~GameInterface()
 void GameInterface::reception()
 {
 	int size = 0;
-	while (size >= 0)
+	while (client.isConnected())
 	{
 		char data[100];
 		size = client.recieveBuffer(data, 100);

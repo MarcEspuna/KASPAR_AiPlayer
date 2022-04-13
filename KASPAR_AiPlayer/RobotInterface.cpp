@@ -119,10 +119,10 @@ void RobotInterface::usrCursorStoped()
 void RobotInterface::setTargetObject(const unsigned int& objId)
 {
 	refreshTimestamp();
-	std::string id = std::to_string(objId);
-	if (data[TO] != id[0])
+	char id = objId + '0';
+	if (data[TO] != id)
 	{
-		data[TO] = id[0];
+		data[TO] = id;
 		txRequest();
 	}
 }
@@ -160,10 +160,10 @@ void RobotInterface::transmition()
 void RobotInterface::figureErased(int objectId)
 {
 	refreshTimestamp();
-	std::string id = std::to_string(objectId);
-	if (data[EF] != id[0])
+	char id = objectId + '0';
+	if (data[EF] != id)
 	{
-		data[EF] = id[0];
+		data[EF] = id;
 		txRequest();
 	}
 }

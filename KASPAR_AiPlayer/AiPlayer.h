@@ -5,6 +5,8 @@
 #include <thread>
 #include <vector>
 
+using time_point = std::chrono::system_clock::time_point;
+
 class AiPlayer : public Listener
 {
 public:
@@ -19,15 +21,24 @@ private:
 	Object cursor;
 	bool usrKey;
 	bool usrSelect;
-	bool volatile enable;
+	bool enable;
 	int overObject;
+
+	bool cWaitting;			// Will indicate that the waiting thread is running
+	bool cContinue;			// Used to make the waitting thread to continue
+
+	time_point startingTime;
+	time_point endTime;
 
 	void updateObjects(char* data, int len);
 	void updateCursor(char* data, int len);
 	float calcDistance(const Object& main, const Object& other);
+	bool isInline(const Object& main, const Object& other);
 	void childWaiting();
+	size_t getLastId();
+	Object closestObject();
 
 	std::thread* waitChild;
-	Object targetObject = {0 , 0.0, 0.0};
+	Object targetObject;
 };
 
