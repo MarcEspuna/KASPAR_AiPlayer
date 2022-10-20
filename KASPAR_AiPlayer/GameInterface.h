@@ -23,5 +23,7 @@ private:
 	std::thread* transmit;							//Thread that will be used to send communication to the game 
 	std::thread* receive;							//Thread that will be used to receve communication from the game
 
+	std::vector<std::string> getDescriptions(const char* data, uint8_t initSize);
+
 };
 

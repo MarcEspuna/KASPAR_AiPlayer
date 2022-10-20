@@ -1,5 +1,6 @@
 #include "Client.h"
 #include <iostream>
+#include <mutex>
 
 Client::Client()
 	:connected(false)
@@ -40,6 +41,7 @@ void Client::sendBuffer(const char* message)
 
 void Client::sendBuffer(const char* message, int len)
 {
+
 	send(s, message, len, (int)0);
 }
 

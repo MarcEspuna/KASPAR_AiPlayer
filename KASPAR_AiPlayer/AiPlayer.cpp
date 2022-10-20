@@ -4,21 +4,22 @@
 #include <chrono>
 #include <mutex>
 
+#define OBJECT_SIZE 40
 
+static std::condition_variable mx_wait;
 static std::mutex mx;
 
 AiPlayer::AiPlayer()
-	: cursor({ 0, 0.0f,0.0f }), overObject(0), usrKey(false), enable(false), usrSelect(false)
+	: overObject(0), usrKey(false), enable(false), usrSelect(false), waitChild(nullptr), cWaitting(true), cContinue(false)
 {
-	waitChild = new std::thread{ &AiPlayer::childWaiting, this };
-	waitChild->detach();
-	delete waitChild;
+
 }
 
 AiPlayer::~AiPlayer()
 {
-	enable = true;
-	Sleep(300);
+	cWaitting = false;
+	cContinue = true;
+	mx_wait.notify_all();
 }
 
 AiDesicion AiPlayer::makeDesicion()
@@ -28,19 +29,18 @@ AiDesicion AiPlayer::makeDesicion()
 	if (m_Objects.size() == 0)
 		return desicion;
 
-	float minDistance = 1000;				//All objects should be closer to that distance;
-
 	if (enable)	// We set the new target
 	{
 		for (const auto& object : m_Objects)
 		{
-			float distance = calcDistance(cursor, object);
-			if (minDistance > distance)
+			if (isInline(cursor, object)) 
 			{
-				minDistance = distance;
 				targetObject = object;
+				break;
 			}
+
 		}
+		startingTime = std::chrono::system_clock::now();		//We reset the starting time of the waiting thread
 		rInterface.setTargetObject(targetObject.id);
 		enable = false;
 	}
@@ -71,26 +71,20 @@ AiDesicion AiPlayer::makeDesicion()
 		rInterface.figureErased(overObject);		
 		rInterface.unsetTargetObject();
 		targetObject.id = 0;
+		cContinue = true;
+		mx_wait.notify_one();					// We notify the waitting thread in order to start waiting again.
 	}
 	else {
 		rInterface.figureNotErased();
 	}
-
 	return desicion;
-}
-
-void AiPlayer::processData(char* data, int size)
-{
-	if (data[0] == 'O')
-		updateObjects(data, size);
-	if (data[0] == 'C')
-		updateCursor(data, size);
 }
 
 void AiPlayer::updateObjects(char* data, int len)
 {
 	enable = false;
-	size_t nObjects = m_Objects.size();
+	size_t nObjects = m_Objects.size(); 
+	size_t lastid = getLastId();	
 	m_Objects.clear();
 	int ptrIndex = 1;
 	while (ptrIndex < len)
@@ -109,54 +103,48 @@ void AiPlayer::updateObjects(char* data, int len)
 	{
 		std::cout << "Object id: " << object.id << " position (" << object.x << ", " << object.y << ") " << std::endl;
 	}
+
 	rInterface.setRemainingFigures(m_Objects.size());
-	if (nObjects != m_Objects.size())
+
+	// Since reception is a lot faster than processing we need to do this workaround in order to unset the target when all objects are destroyed.
+	if (!m_Objects.size() && lastid)	
 	{
-		waitChild = new std::thread{ &AiPlayer::childWaiting, this };
-		waitChild->detach();
-		delete waitChild;
+		rInterface.figureErased(lastid);
+		rInterface.unsetTargetObject();
+		targetObject.id = 0;
+		cContinue = true;
+		mx_wait.notify_one();					// We notify the waitting thread in order to start waiting again.
 	}
+
 }
 
 void AiPlayer::updateCursor(char* data, int len)
 {
-	if (len == 12)
+	if (len % 12 == 0)
 	{
 		int ptrIndex = 1;
 		{	//Here we check if the usr is moving up, down or right
 			float newXPos;
 			std::memcpy(&newXPos, &data[ptrIndex], sizeof(cursor.x));
-			if (cursor.x > newXPos)
-				rInterface.cursorLeft();
-			else if (cursor.x < newXPos)
-				rInterface.cursorRight();
-			else
-				rInterface.usrCursorStoped();
+
+			if (cursor.x > newXPos)			rInterface.cursorLeft();
+			else if (cursor.x < newXPos)	rInterface.cursorRight();
+			else							rInterface.usrCursorStoped();
 		}
 
 		std::memcpy(&cursor.x, &data[ptrIndex], sizeof(cursor.x));
 		ptrIndex += sizeof(cursor.x); //We update the new cursor x position.
 		
-
 		std::memcpy(&cursor.y, &data[ptrIndex], sizeof(cursor.y));
 		ptrIndex += sizeof(cursor.y);
 		overObject = data[ptrIndex++];
-		if (overObject && overObject == targetObject.id)
-		{
-			rInterface.overFigure();
-		}
-		else 
-		{
-			rInterface.notOverFigure();
-		}
-		if (data[ptrIndex++] == 'Y')
-		{
-			usrKey = true;
-		}
-		else
-		{
-			usrKey = false;
-		}
+		
+		if (overObject && overObject == targetObject.id)	rInterface.overFigure();
+		else												rInterface.notOverFigure();
+		
+		if (data[ptrIndex++] == 'Y')						usrKey = true;
+		else												usrKey = false;
+		
 		if (data[ptrIndex++] == 'Y')		// User select key
 		{
 			if (!usrSelect) {
@@ -170,9 +158,39 @@ void AiPlayer::updateCursor(char* data, int len)
 		}
 		//rInterface.figureNotErased();
 	}
-	else
+	else {
 		std::cout << "[AiPlayer]: ERROR, message length not match" << std::endl;
+		std::cout << "[AiPlayer]: Len is: " << len << std::endl;
+	}
 
+}
+void AiPlayer::startGame()
+{
+	rInterface.start();				// Tell the robot interface that the game started
+	initChildWaiting();				// Start creating waitting threads for help in decision making
+}
+// Protocool for description <I, uint16_t size, >
+void AiPlayer::updateDescription(const std::vector<std::string>& data)
+{
+	std::cout << "[AI PLAYER]: Sending description..." << std::endl;
+	for (const auto& line : data) {
+		std::cout << "[AI PlAYER]: line:  " << line << std::endl;
+		rInterface.sendDescription(line);
+	}
+	rInterface.endDescription();
+}
+
+void AiPlayer::endGame()
+{
+	finiChildWaiting();
+	rInterface.endGame();
+	targetObject.id = 0;
+	std::cout << "[AiPlayer]: Game ended.\n";
+}
+
+void AiPlayer::setLogfilename(std::string filename)
+{
+	rInterface.setLogFilename(filename);
 }
 
 float AiPlayer::calcDistance(const Object& main, const Object& other)
@@ -180,23 +198,77 @@ float AiPlayer::calcDistance(const Object& main, const Object& other)
 	return std::sqrt((float)std::pow(main.x - other.x, 2) + (float)std::pow(main.y - other.y, 2));
 }
 
+bool AiPlayer::isInline(const Object& main, const Object& other)
+{
+	return std::abs(main.x - other.x) < OBJECT_SIZE;
+}
+
+/// <summary>
+/// This thread is used to wait 15 sec (if the user selects an object we reset the timer) before automatically chosing a target.
+/// </summary>
 void AiPlayer::childWaiting()
 {
-	mx.lock();
-	//rInterface.unsetTargetObject();
-	enable = false;
-	size_t beforeObjects = m_Objects.size();
-	auto startingTime = std::chrono::system_clock::now();
-	auto endTime = std::chrono::system_clock::now();
-	while (endTime - startingTime < std::chrono::duration<double>(15))
+	std::unique_lock<std::mutex> lock(mx);
+	while (cWaitting)
 	{
-		Sleep(250);
-		if (enable) {
-			mx.unlock();
-			return;
-		}
+		std::cout << "[WAITTING THREAD]: counting waiting...\n";
+		startingTime = std::chrono::system_clock::now();
 		endTime = std::chrono::system_clock::now();
+		while (cWaitting && endTime - startingTime < std::chrono::duration<double>(15))
+		{
+			Sleep(1);
+			endTime = std::chrono::system_clock::now();
+		}
+		targetObject = closestObject();		// The ai will choose the closest object
+		enable = true;						// In order to set the target object
+		// We make the thread wait here untill the main program notifies us to continue.
+		cContinue = false;
+		mx_wait.wait(lock, [&] {return cContinue; });
+		cContinue = false;					// In order to make the thread wait again once it reaches wait.
 	}
-	enable = true;
-	mx.unlock();
+	std::cout << "[WAITTING THREAD]: exit \n";
+}
+
+
+void AiPlayer::finiChildWaiting()
+{
+	cWaitting = false;		// make waitting thread to stope
+}
+
+void AiPlayer::initChildWaiting()
+{
+	if (!waitChild) 
+	{
+		waitChild = new std::thread{ &AiPlayer::childWaiting, this };
+		waitChild->detach();
+		delete waitChild;
+		waitChild = nullptr;
+	}
+}
+
+/// <summary>
+/// Used to get the last remaing object id. Edge case of solving not restoring the target object when all objects are destroyed.
+/// </summary>
+/// <returns></returns>
+size_t AiPlayer::getLastId()
+{
+	if (m_Objects.size() == 1)
+		return (size_t)m_Objects[0].id;
+	return 0;
+}
+
+Object AiPlayer::closestObject()
+{
+	Object target = Object();
+	float minDistance = 10000.0f;		// No objects will be further than that.
+	for (auto& obj : m_Objects)
+	{
+		float distance = calcDistance(cursor, obj);
+		if (minDistance > distance) 
+		{
+			target = obj;
+			minDistance = distance;
+		}
+	}
+	return target;
 }
