@@ -13,7 +13,12 @@ public:
 	AiPlayer();
 	~AiPlayer();
 	AiDesicion makeDesicion();
-	void processData(char* data, int size);
+	void updateObjects(char* data, int len);
+	void updateCursor(char* data, int len);
+	void startGame();
+	void updateDescription(const std::vector<std::string>& data);
+	void endGame();
+	void setLogfilename(std::string filename);
 
 private:
 	RobotInterface rInterface;
@@ -30,10 +35,12 @@ private:
 	time_point startingTime;
 	time_point endTime;
 
-	void updateObjects(char* data, int len);
-	void updateCursor(char* data, int len);
+
+
 	float calcDistance(const Object& main, const Object& other);
 	bool isInline(const Object& main, const Object& other);
+	void initChildWaiting();
+	void finiChildWaiting();
 	void childWaiting();
 	size_t getLastId();
 	Object closestObject();

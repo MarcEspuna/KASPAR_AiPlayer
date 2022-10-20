@@ -80,26 +80,6 @@ AiDesicion AiPlayer::makeDesicion()
 	return desicion;
 }
 
-void AiPlayer::processData(char* data, int size)
-{
-	static bool firstTime = true;
-
-	if (data[0] == 'O')
-		updateObjects(data, size);
-	if (data[0] == 'C')
-		updateCursor(data, size);
-
-	// Implementation for now: (should be a better way to do this)
-	if (firstTime)
-	{
-		waitChild = new std::thread{ &AiPlayer::childWaiting, this };
-		waitChild->detach();
-		delete waitChild;
-		waitChild = nullptr;
-		firstTime = false;
-	}
-}
-
 void AiPlayer::updateObjects(char* data, int len)
 {
 	enable = false;
@@ -140,18 +120,16 @@ void AiPlayer::updateObjects(char* data, int len)
 
 void AiPlayer::updateCursor(char* data, int len)
 {
-	if (len == 12)
+	if (len % 12 == 0)
 	{
 		int ptrIndex = 1;
 		{	//Here we check if the usr is moving up, down or right
 			float newXPos;
 			std::memcpy(&newXPos, &data[ptrIndex], sizeof(cursor.x));
-			if (cursor.x > newXPos)
-				rInterface.cursorLeft();
-			else if (cursor.x < newXPos)
-				rInterface.cursorRight();
-			else
-				rInterface.usrCursorStoped();
+
+			if (cursor.x > newXPos)			rInterface.cursorLeft();
+			else if (cursor.x < newXPos)	rInterface.cursorRight();
+			else							rInterface.usrCursorStoped();
 		}
 
 		std::memcpy(&cursor.x, &data[ptrIndex], sizeof(cursor.x));
@@ -182,8 +160,37 @@ void AiPlayer::updateCursor(char* data, int len)
 	}
 	else {
 		std::cout << "[AiPlayer]: ERROR, message length not match" << std::endl;
+		std::cout << "[AiPlayer]: Len is: " << len << std::endl;
 	}
 
+}
+void AiPlayer::startGame()
+{
+	rInterface.start();				// Tell the robot interface that the game started
+	initChildWaiting();				// Start creating waitting threads for help in decision making
+}
+// Protocool for description <I, uint16_t size, >
+void AiPlayer::updateDescription(const std::vector<std::string>& data)
+{
+	std::cout << "[AI PLAYER]: Sending description..." << std::endl;
+	for (const auto& line : data) {
+		std::cout << "[AI PlAYER]: line:  " << line << std::endl;
+		rInterface.sendDescription(line);
+	}
+	rInterface.endDescription();
+}
+
+void AiPlayer::endGame()
+{
+	finiChildWaiting();
+	rInterface.endGame();
+	targetObject.id = 0;
+	std::cout << "[AiPlayer]: Game ended.\n";
+}
+
+void AiPlayer::setLogfilename(std::string filename)
+{
+	rInterface.setLogFilename(filename);
 }
 
 float AiPlayer::calcDistance(const Object& main, const Object& other)
@@ -207,9 +214,9 @@ void AiPlayer::childWaiting()
 		std::cout << "[WAITTING THREAD]: counting waiting...\n";
 		startingTime = std::chrono::system_clock::now();
 		endTime = std::chrono::system_clock::now();
-		while (endTime - startingTime < std::chrono::duration<double>(15))
+		while (cWaitting && endTime - startingTime < std::chrono::duration<double>(15))
 		{
-			Sleep(250);
+			Sleep(1);
 			endTime = std::chrono::system_clock::now();
 		}
 		targetObject = closestObject();		// The ai will choose the closest object
@@ -220,6 +227,23 @@ void AiPlayer::childWaiting()
 		cContinue = false;					// In order to make the thread wait again once it reaches wait.
 	}
 	std::cout << "[WAITTING THREAD]: exit \n";
+}
+
+
+void AiPlayer::finiChildWaiting()
+{
+	cWaitting = false;		// make waitting thread to stope
+}
+
+void AiPlayer::initChildWaiting()
+{
+	if (!waitChild) 
+	{
+		waitChild = new std::thread{ &AiPlayer::childWaiting, this };
+		waitChild->detach();
+		delete waitChild;
+		waitChild = nullptr;
+	}
 }
 
 /// <summary>
